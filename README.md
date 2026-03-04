@@ -107,6 +107,45 @@ curl http://localhost:3000/health
 port: 3000  # 可选，serve 模式监听端口，默认 3000
 ```
 
+## Docker 部署
+
+### 使用 Docker Compose（推荐）
+
+1. 在项目根目录创建 `config.yaml` 配置文件（格式参考上方配置说明）
+
+2. 启动服务：
+
+```bash
+docker compose up -d
+```
+
+3. 查看日志：
+
+```bash
+docker compose logs -f
+```
+
+### 使用 Docker 命令
+
+```bash
+# 拉取镜像
+docker pull ghcr.io/alexmaze/subscribe_boostnet:latest
+
+# 运行（将宿主机配置文件挂载到容器内）
+docker run -d -p 3000:3000 \
+  -v /path/to/your/config.yaml:/app/config.yaml:ro \
+  ghcr.io/alexmaze/subscribe_boostnet:latest
+```
+
+### 本地构建镜像
+
+```bash
+docker build -t boostnet .
+docker run -d -p 3000:3000 \
+  -v ./config.yaml:/app/config.yaml:ro \
+  boostnet
+```
+
 ## 功能特性
 
 1. **自动登录**：使用 puppeteer 自动完成登录流程。

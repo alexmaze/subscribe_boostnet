@@ -1,0 +1,8 @@
+services:
+  boostnet:
+    image: ghcr.io/alexmaze/subscribe_boostnet:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    restart: unless-stopped
