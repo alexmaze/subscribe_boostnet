@@ -74,9 +74,43 @@ boostnet -c ./my-config.yaml
 bunx github:alexmaze/subscribe_boostnet -c /path/to/config.yaml
 ```
 
+## Serve 模式
+
+除了一次性运行，还支持以 HTTP 服务器模式运行，提供 `/subscription` 代理端口供客户端直接拉取订阅：
+
+```bash
+# 启动服务器（默认端口 3000）
+boostnet serve
+
+# 指定端口
+boostnet serve -p 8080
+
+# 指定配置文件
+boostnet serve -c ./my-config.yaml -p 8080
+```
+
+启动后，客户端可通过以下接口获取订阅内容：
+
+```bash
+# 拉取订阅（请求头会透传给 Boostnet）
+curl http://localhost:3000/subscription -H "User-Agent: Clash/1.0"
+
+# 健康检查
+curl http://localhost:3000/health
+```
+
+每次请求 `/subscription` 时，服务器会实时通过 Puppeteer 登录 Boostnet 获取最新订阅链接，然后代理返回内容。适用于客户端无法直接访问 Boostnet 的场景。
+
+配置文件中可指定默认端口：
+
+```yaml
+port: 3000  # 可选，serve 模式监听端口，默认 3000
+```
+
 ## 功能特性
 
 1. **自动登录**：使用 puppeteer 自动完成登录流程。
 2. **链接提取**：自动点击"复制订阅链接"并解析。
 3. **格式转换**：从订阅链接中解析节点信息（支持 SS/Trojan 等），并转换为 Mihomo/Clash 兼容的 YAML 格式。
 4. **自动保存**：将生成的配置直接保存到指定目录。
+5. **Serve 代理模式**：启动 HTTP 服务器，代理订阅请求，透传请求头，适用于客户端无法直连 Boostnet 的场景。
