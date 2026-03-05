@@ -13,6 +13,10 @@ const HOP_BY_HOP_HEADERS = new Set([
     'upgrade',
     'host',
     'accept-encoding',
+    'x-forwarded-for',
+    'x-forwarded-host',
+    'x-forwarded-proto',
+    'x-real-ip',
 ]);
 
 const PROXY_RESPONSE_HEADERS = [
