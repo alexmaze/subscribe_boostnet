@@ -12,12 +12,12 @@ const HOP_BY_HOP_HEADERS = new Set([
     'transfer-encoding',
     'upgrade',
     'host',
+    'accept-encoding',
 ]);
 
 const PROXY_RESPONSE_HEADERS = [
     'content-type',
     'content-disposition',
-    'content-encoding',
     'subscription-userinfo',
     'profile-update-interval',
     'profile-web-page-url',
