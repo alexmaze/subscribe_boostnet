@@ -23,10 +23,22 @@ const PROXY_RESPONSE_HEADERS = [
     'profile-web-page-url',
 ];
 
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
-
 let pending: Promise<Response> | null = null;
-let cache: { body: ArrayBuffer; headers: [string, string][]; status: number; time: number } | null = null;
+let requestCounter = 0;
+
+function ts(): string {
+    return new Date().toISOString();
+}
+
+function log(level: 'info' | 'warn' | 'error' | 'debug', reqId: string, msg: string) {
+    const prefix = `[${ts()}] [${reqId}]`;
+    switch (level) {
+        case 'info':  console.log(chalk.blue(`${prefix} ${msg}`)); break;
+        case 'warn':  console.log(chalk.yellow(`${prefix} ${msg}`)); break;
+        case 'error': console.error(chalk.red(`${prefix} ${msg}`)); break;
+        case 'debug': console.log(chalk.gray(`${prefix} ${msg}`)); break;
+    }
+}
 
 function filterRequestHeaders(headers: Headers): Record<string, string> {
     const filtered: Record<string, string> = {};
@@ -48,11 +60,12 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
     });
 }
 
-async function handleSubscription(req: Request, config: Config): Promise<Response> {
+async function handleSubscription(req: Request, config: Config, reqId: string): Promise<Response> {
     const startTime = Date.now();
+    const elapsed = () => `${Date.now() - startTime}ms`;
 
     try {
-        console.log(chalk.blue(`[${new Date().toISOString()}] Incoming request, fetching subscription link via Puppeteer...`));
+        log('info', reqId, 'Starting Puppeteer to fetch subscription link...');
 
         const subscriptionLink = await withTimeout(
             getSubscriptionLink(config),
@@ -60,10 +73,12 @@ async function handleSubscription(req: Request, config: Config): Promise<Respons
             'Puppeteer getSubscriptionLink',
         );
 
-        console.log(chalk.green(`Subscription link obtained in ${Date.now() - startTime}ms`));
+        log('info', reqId, `Subscription link obtained (${elapsed()}): ${subscriptionLink}`);
 
         const clientHeaders = filterRequestHeaders(req.headers);
+        log('debug', reqId, `Forwarding headers: ${JSON.stringify(clientHeaders)}`);
 
+        log('info', reqId, 'Fetching upstream subscription content...');
         const upstream = await withTimeout(
             fetch(subscriptionLink, {
                 headers: clientHeaders,
@@ -73,20 +88,21 @@ async function handleSubscription(req: Request, config: Config): Promise<Respons
             'Upstream fetch',
         );
 
+        log('info', reqId, `Upstream responded: status=${upstream.status}, content-type=${upstream.headers.get('content-type') ?? 'N/A'} (${elapsed()})`);
+
         const responseHeaders = new Headers();
         for (const key of PROXY_RESPONSE_HEADERS) {
             const val = upstream.headers.get(key);
-            if (val) responseHeaders.set(key, val);
+            if (val) {
+                responseHeaders.set(key, val);
+                log('debug', reqId, `Response header: ${key}: ${val}`);
+            }
         }
 
-        console.log(chalk.green(`[${new Date().toISOString()}] Request completed in ${Date.now() - startTime}ms`));
-
-        const body = await upstream.arrayBuffer();
-        const headerEntries: [string, string][] = [];
-        responseHeaders.forEach((v, k) => headerEntries.push([k, v]));
-        cache = { body, headers: headerEntries, status: upstream.status, time: Date.now() };
-
-        console.log(chalk.blue(`Response cached, TTL ${CACHE_TTL_MS / 1000}s`));
+        const body = await upstream.text();
+        const preview = body.length > 500 ? body.slice(0, 500) + `... (${body.length} bytes total)` : body;
+        log('debug', reqId, `Response body:\n${preview}`);
+        log('info', reqId, `Request completed successfully, body ${body.length} bytes (${elapsed()})`);
 
         return new Response(body, {
             status: upstream.status,
@@ -94,7 +110,9 @@ async function handleSubscription(req: Request, config: Config): Promise<Respons
         });
     } catch (error) {
         const msg = (error as Error).message;
-        console.error(chalk.red(`[${new Date().toISOString()}] Error after ${Date.now() - startTime}ms: ${msg}`));
+        const stack = (error as Error).stack;
+        log('error', reqId, `Failed after ${elapsed()}: ${msg}`);
+        if (stack) log('debug', reqId, `Stack trace: ${stack}`);
         return new Response(JSON.stringify({ error: msg }), {
             status: 502,
             headers: { 'Content-Type': 'application/json' },
@@ -110,27 +128,24 @@ export function startServer(config: Config, portOverride?: number) {
         idleTimeout: 120,
         async fetch(req) {
             const url = new URL(req.url);
+            const method = req.method;
+            const reqId = `#${++requestCounter}`;
+
+            log('info', reqId, `${method} ${url.pathname}`);
 
             if (url.pathname === '/subscription') {
-                if (cache && Date.now() - cache.time < CACHE_TTL_MS) {
-                    console.log(chalk.green(`[${new Date().toISOString()}] Serving from cache (age: ${Math.round((Date.now() - cache.time) / 1000)}s)`));
-                    return new Response(cache.body, {
-                        status: cache.status,
-                        headers: new Headers(cache.headers),
-                    });
-                }
-
                 if (pending) {
-                    console.log(chalk.yellow('Concurrent request queued, waiting for ongoing Puppeteer operation...'));
+                    log('warn', reqId, 'Another request is in progress, waiting for it to complete...');
                     try {
                         const prev = await pending;
+                        log('info', reqId, 'Reusing response from concurrent request');
                         return prev.clone();
                     } catch {
-                        // Previous failed, fall through to try again
+                        log('warn', reqId, 'Concurrent request failed, retrying independently');
                     }
                 }
 
-                const promise = handleSubscription(req, config);
+                const promise = handleSubscription(req, config, reqId);
                 pending = promise;
                 try {
                     return await promise;
@@ -140,17 +155,20 @@ export function startServer(config: Config, portOverride?: number) {
             }
 
             if (url.pathname === '/health') {
+                log('debug', reqId, 'Health check OK');
                 return new Response('ok');
             }
 
+            log('warn', reqId, `Unknown path: ${url.pathname}`);
             return new Response('Not Found', { status: 404 });
         },
     });
 
-    console.log(chalk.green(`Server listening on http://localhost:${server.port}`));
+    console.log(chalk.green(`\n[${ts()}] Server listening on http://localhost:${server.port}`));
     console.log(chalk.blue('Endpoints:'));
-    console.log(chalk.blue(`  GET /subscription  - Proxy subscription from Boostnet`));
-    console.log(chalk.blue(`  GET /health        - Health check`));
+    console.log(chalk.blue('  GET /subscription  - Proxy subscription from Boostnet'));
+    console.log(chalk.blue('  GET /health        - Health check'));
+    console.log(chalk.gray(`Config: urls=${config.urls.join(', ')}, user=${config.username}\n`));
 
     return server;
 }
